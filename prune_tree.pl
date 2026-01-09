@@ -4,7 +4,7 @@
 #
 #
 #		  
-#    	Copyright (C) 2015-2024 Douglas Chesters
+#    	Copyright (C) 2015-2026 Douglas Chesters
 #
 #	This program is free software: you can redistribute it and/or modify
 #	it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 #	You should have received a copy of the GNU General Public License
 #	along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
-#	contact address dc0357548934@live.co.uk
+#	contact: chesters.phylogenetics@gmail.com
 #
 #
 #
@@ -64,6 +64,11 @@
 #			slightly more helpful error messge when taxon on prune list is not found on tree.
 #	24 May 2022: 	gives a useful error message if user tries to prune outgroup
 #	20 Jul 2022: 	alerts user if intree has exact matching terminal IDs, which will break most tree processing algorithms
+#	17 Feb 2025:	Another error message. script currently cant handle node labels
+#	12 Apr 2025:	New option: -enable_root_pruning. Default is for script to crash if outgroup is specified for pruning.
+#	
+#	
+#	
 #	
 #	
 #	
@@ -205,7 +210,8 @@ if($prune_string =~ /\w/)
 	while(my $line = <PRUNE_FILE>)
 		{
 		$line =~ s/\n//;$line =~ s/\r//;
-		$prune_these{$line}=1;$count_to_prune++;
+		if($line =~ /[\w\d]/){$prune_these{$line}=1};
+		$count_to_prune++;
 		};
 	close PRUNE_FILE;
 	print "user specified list of things to prune in file $prune_list_file, have read $count_to_prune\n";
@@ -281,6 +287,10 @@ if($count_not_to_prune >= 500 && $newick_substring_replacements <= 4)
  if($new_newick_string3 =~ s/^\((\(.+\))\)$/$1/)
 	{print "extra parentheses removed\n"};
 
+if($remove_branchlengths == 1)
+	{
+	while($new_newick_string3 =~ s/\:[0-9\.]+//){};
+	};
 
 open(NEWICK5 , ">$output_filename") || die "\nerror 193.\n";
 
@@ -293,16 +303,13 @@ close NEWICK5;
 
 
 print "pruned tree writen to $output_filename
-
-depending on whats pruned, may have an extra pair of parentheses at extremes of string, 
-	you can manually remove these
-	unforunately, the opposite can also occur ! you may need to add a pair to ends.
-	thus, please check file 
+	depending on whats pruned, may have an extra pair of parentheses at extremes of string, you can manually remove these
+	unforunately, the opposite can also occur ! you may need to add a pair to ends. thus, please check file 
 ";
 
 close LOG;
 
-print "\n\n\nend of script\n";
+print "\n\nend of script\n";
 exit;
 
 
@@ -336,19 +343,29 @@ print "\nlooking at tree:$treefile\n";
 
 $tree1 =~ s/ //g;
 
-
-if($tree1 =~ s/\:\-*\d+\.\d+[eE]\-\d+([\(\)\,])/$1/g){die "\ncannot yet deal with scinot branchlengths\n"};
-
-$tree_parse = 0; 	
-if($tree_parse ==1)
+if($remove_branchlengths == 1)
 	{
-
 	# remove branchlengths, scientific notation, incl negative values for distance trees. example: -8.906e-05
 	$tree1 =~ s/\:\-*\d+\.\d+[eE]\-\d+([\(\)\,])/$1/g; 
 	# remove regular branchlengths: 0.02048
 	$tree1 =~ s/\:\-*\d+\.\d+//g; 
 	# remove 0 length branchlengths
 	$tree1 =~ s/\:\d+//g;
+	};
+
+
+if($tree1 =~ s/\:\-*\d+\.\d+[eE]\-\d+([\(\)\,])/$1/g)
+	{
+ # 5.194E-7
+	die "\ncannot yet deal with scientific notation branchlengths. you can prune with bls removed: -remove_branchlengths\n"
+	};
+
+
+
+$tree_parse = 0; 	
+if($tree_parse ==1)
+	{
+
 
 	# sumtrees node supports
 	$tree1 =~ s/\)[01]\.[0-9]+/\)/g; 
@@ -606,6 +623,7 @@ if($arguments =~ /-treefile\s+(\S+)/)
 if($arguments =~ /-seqfile\s+(\S+)/) # only used to get taxa for pruning, not needed if these are provided on command line
 	{
 	$fas_file = $1;
+	print "\n\nWARNING, recommend -prune_list_file, previous way might ignore higher taxon terminals\n\n";
 	}elsif($arguments =~ /-prune_list_file\s+(\S+)/)
 	{
 	$prune_filename = $1;
@@ -632,6 +650,20 @@ if($arguments =~ /\-process_tree_labels\s+(\d)/)
 	{
 	$process_tree_labels = $1; # default nothing. if == 1, binimial to genus. if == 2, more broad trimming of species strings
 	}else{
+	};
+
+if($arguments =~ /\-enable_root_pruning/) # uncertain behaviour, so off by default.
+	{
+	$enable_root_pruning=1;
+	}else{
+	$enable_root_pruning=0;
+	};
+
+if($arguments =~ /\-remove_branchlengths/) # script can work with regular branchlengths but not scientific notation, thus option to remove
+	{
+	$remove_branchlengths=1;
+	}else{
+	$remove_branchlengths=0;
 	};
 
 
@@ -676,16 +708,22 @@ my @prune_tax = keys %prune_these;@prune_tax = sort @prune_tax;
 
 foreach my $tax(@prune_tax)
 	{
-	print "\nNext tax to prune:$tax\n";
+#	print "\nNext tax to prune:$tax\n";
 	my $parent  = $nodes{$tax}{parent};
 	unless($parent =~ /[\d\w]/){die "\nerror 485. no parent node for $tax\n"};
 	my $grandparent  = $nodes{$parent}{parent};
 	unless($grandparent =~ /[\d\w]/)
 		{
-		print "\nerror 487. no grandparent node for $tax (parent:$parent) .... tip, " , 
-			"this script probably wont work on unrooted trees, perhaps your tree is rooted.\n";
-		print "another tip ... this error might occur if you specify to prune an outgroup\n";
-		die "";
+		
+		if($enable_root_pruning==1)
+			{
+			}else{
+			print "\nerror 487. no grandparent node for $tax (parent:$parent) .... tip, " , 
+				"this script probably wont work on unrooted trees, perhaps your tree is rooted.\n";
+			print "another tip ... this error might occur if you specify to prune an outgroup\n";
+			print "yet another, this error might be thrown by presence of node support values\n";
+			die "";
+			};
 		};
 
 	my $count_decendents_of_parent = $child_counts{$parent};# will be -1, $child_counts{$nodeID} = $#child_nodes;
@@ -695,7 +733,14 @@ foreach my $tax(@prune_tax)
 #	unless($count_decendents_of_parent == 1){die "\nnot written for non-totally bifurcating. (\$count_decendents_of_parent == $count_decendents_of_parent)\n"}
 
 	my $children_of_grandparent = $child_counts{$grandparent};
-	unless($children_of_grandparent =~ /\d/){die "\nerror 2242\n"}
+	unless($children_of_grandparent =~ /\d/)
+		{
+		if($enable_root_pruning==1)
+			{
+			}else{
+			die "\nerror 2242\n"
+			}
+		}
 
 	for my $i(0 .. $children_of_grandparent)
 		{
@@ -709,14 +754,14 @@ foreach my $tax(@prune_tax)
 			for my $j(0 .. $count_decendents_of_parent)
 				{
 				# Go through all children of parent, need to find all sisters of node to be deleted.
-				my $child2  = $nodes{$parent}{$j};print "$j\t$child2\n";
+				my $child2  = $nodes{$parent}{$j}; # print "$j\t$child2\n";
 				if($child2 eq $tax)
 					{
 					# Arrived at node to be deleted. so ignore.
-					delete($nodes{$tax});$nodes_deleted++;print "\tdeleting.\n"
+					delete($nodes{$tax});$nodes_deleted++; # print "\tdeleting.\n"
 					}else{
 					# Arrived at sister of node to be deleted, this is now the child of the grandparent
-					$nodes{$grandparent}{$i} = $child2;print "\tsister $child2 is now child of grandparent node $grandparent\n";
+					$nodes{$grandparent}{$i} = $child2; # print "\tsister $child2 is now child of grandparent node $grandparent\n";
 
 					# incorrect:
 					# The branchlength of the child of the grandparent is
@@ -737,7 +782,7 @@ foreach my $tax(@prune_tax)
 
 
 
-print "\tnodes_deleted:$nodes_deleted\n"
+# print "\tnodes_deleted:$nodes_deleted\n"
 
 };#sub prune_nodes
 

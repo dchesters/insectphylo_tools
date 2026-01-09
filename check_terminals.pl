@@ -2,7 +2,7 @@
 #
 #	check_terminals.pl, used in pipeline for processing machine readable phylogenies
 #		  
-#    	Copyright (C) 2022-2024 Douglas Chesters
+#    	Copyright (C) 2022-2026 Douglas Chesters
 #
 #	This program is free software: you can redistribute it and/or modify
 #	it under the terms of the GNU General Public License as published by
@@ -17,7 +17,7 @@
 #	You should have received a copy of the GNU General Public License
 #	along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
-# 
+# 	contact: chesters.phylogenetics@gmail.com
 # 
 ################################################################################################################ 
 # 
@@ -29,8 +29,8 @@
 # 2023-05-19:	Several 2letter species names in butterflies, now allowed for.
 # 2023-08-22:	lists terminals that look like subfams / fams
 # 2024-09-09:	Added licence for upload to github.
-# 
-# 
+# 2025-02-04:	Bugfix: incorrectly pruning in cases there are >=2 of a genus, all species unknown, should be retaining 1.
+# 		Added tribe-like names to terminals flagged as higher taxon, previously only family or subfamily.
 # 
 # 
 # 
@@ -55,7 +55,6 @@ close IN;
 
 open(OUT, ">$file2") || die "";
 open(OUT2, ">$file2.tre") || die "";
-open(OUT3, ">$file2.prune_from_file") || die "";
 
 $treeCOPY = $tree;
 $treeCOPY2 = $tree;
@@ -69,7 +68,15 @@ while($tree =~ s/([\(\,])([A-Z][^\:\,\)]+)([\:\,\)])/$1$3/)
 	if($terminal =~ /^([A-Z][a-z]+)/)
 		{
 		$genus = $1;
-		if($genus =~ /^[A-Z][a-z]+i[dn]ae$/){$families{$terminal}=1};
+		if($genus =~ /^[A-Z][a-z]+i[dn]ae$/)
+			{
+			$families{$terminal}=1
+			}elsif($genus =~ /^[A-Z][a-z]+ini$/)
+			{
+			$families{$terminal}=1
+			
+			};
+
 		}else{print "\nWARNING, couldnt parse genus.\n"};
 	$genus_counts{$genus}++;
 
@@ -96,6 +103,7 @@ while($tree =~ s/([\(\,])([A-Z][^\:\,\)]+)([\:\,\)])/$1$3/)
 				# species ambiguous: sp.
 
 				$non_binomial_terminals{$terminal} = $genus; 
+				$species_ambigous_genus_counts{$genus}++;
 				$non_binomial_count++; print "terminal:$terminal\tNON BINOMIAL\n";
 				}else{
 				# 2 letter but not sp., must be a species name of 2 letters
@@ -105,6 +113,7 @@ while($tree =~ s/([\(\,])([A-Z][^\:\,\)]+)([\:\,\)])/$1$3/)
 			}else{
 			# not an expected binomial, not 2 letter, must be something weird like a code
 			$non_binomial_terminals{$terminal} = $genus; 
+			$species_ambigous_genus_counts{$genus}++;
 			$non_binomial_count++; print "terminal:$terminal\tNON BINOMIAL\n";
 			};
 
@@ -115,6 +124,7 @@ while($tree =~ s/([\(\,])([A-Z][^\:\,\)]+)([\:\,\)])/$1$3/)
 
 print "
 non_binomial_count:$non_binomial_count
+count repeat terminals:$count_duplicate_terminals
 ";
 my @non_binoms = keys %non_binomial_terminals; @non_binoms = sort @non_binoms;
 print "\n\n";
@@ -123,10 +133,30 @@ foreach my $terminal(@non_binoms)
 	$belongs_to_genus 	= $non_binomial_terminals{$terminal};
 	my $count 		= $genus_counts{$belongs_to_genus};
 
+	# if current species amiguous belongs to genus but there are no species knowns, will need to keep one represesntative of.
+	my $sp_ambiguous	= $species_ambigous_genus_counts{$belongs_to_genus};
+	# print "of current genus, $sp_ambiguous are species ambiguous\n";
+
 	if($count >= 2)
 		{
 		print "\t$terminal belongs to $belongs_to_genus which has congeners ($count), so not needed\n";
-		$store_prune_IDs{$terminal} = 1;
+		if($count == $sp_ambiguous)
+			{
+			print " ***** although appears all of this genus are species unknown, so need to keep one.\n";
+			if($retained_one_for_genus{$belongs_to_genus} == 1)
+				{
+				$store_prune_IDs{$terminal} = 1; print "\tpruning $terminal\n"
+				}else{
+				$retained_one_for_genus{$belongs_to_genus} = 1;
+				$count_genus_unique_species_ambig++;
+				print "\talthough terminal $terminal is species ambiguous, there are no species knowns for genus, so keeping this one\n";
+				print OUT ">$terminal\n";
+
+				};
+			}else{
+			$store_prune_IDs{$terminal} = 1;
+			};
+
 		}else{
 		$count_genus_unique_species_ambig++;print "although terminal $terminal is species ambiguous, it is genus unique so can be used\n";
 		print OUT ">$terminal\n";
@@ -184,16 +214,15 @@ if(length($treeCOPY2) <= 20)
 
 
 
-
+open(OUT3, ">$file2.prune_from_file") || die "";
 my @pruneIDs = keys %store_prune_IDs;@pruneIDs = sort @pruneIDs;
 foreach my $term(@pruneIDs)
 	{
 	print "uninformative:$term\n";
 	print OUT3 "$term\n";
 	};
-
 my @fams = keys %families;@fams = sort @fams;
-print "following terminals look like family/subfam level names:\n";
+print "following terminals look like family/subfam/tribe level names:\n";
 foreach my $term(@fams)
 	{
 	print "term:$term\n";
